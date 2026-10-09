@@ -16,6 +16,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+require("./fund"); // polling confirmation patch (no WebSocket dependency)
 const {
   Connection, Keypair, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction,
 } = require("@solana/web3.js");

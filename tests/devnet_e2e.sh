@@ -12,6 +12,10 @@ cd "$REPO"
 export DUST_WORKDIR="${DUST_WORKDIR:-$REPO/devnet}"
 export NODE_PATH="${NODE_PATH:-$HOME/workspace/crypto-venture/dust/devnet/node_modules}"
 export RPC_URL="${RPC_URL:-https://api.devnet.solana.com}"
+# Local test validator: fund from its faucet keypair (requestAirdrop is flaky there)
+if [[ "$RPC_URL" == *"localhost"* || "$RPC_URL" == *"127.0.0.1"* ]]; then
+  export DUST_FAUCET_KEYPAIR="${DUST_FAUCET_KEYPAIR:-$HOME/workspace/crypto-venture/dust/validator-ledger/test-ledger/faucet-keypair.json}"
+fi
 LOG="$REPO/tests/TEST_LOG.md"
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 

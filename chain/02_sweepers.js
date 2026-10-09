@@ -17,6 +17,8 @@ const {
 
 const RPC = process.env.RPC_URL || "https://api.devnet.solana.com";
 const WORKDIR = process.env.DUST_WORKDIR || path.join(__dirname, "..", "devnet");
+const N_SWEEPERS = parseInt(process.env.DUST_N_SWEEPERS || "25", 10); // incl. whale+subfloor+nonsweeper
+const TX_DELAY_MS = parseInt(process.env.DUST_TX_DELAY_MS || "400", 10);
 
 function seededRand(seed) {
   let s = seed >>> 0;
@@ -26,18 +28,10 @@ function seededRand(seed) {
   };
 }
 
+const { fund } = require("./fund");
+
 async function airdropWithRetry(conn, pubkey, lamports, label) {
-  for (let i = 0; i < 10; i++) {
-    try {
-      const sig = await conn.requestAirdrop(pubkey, lamports);
-      await conn.confirmTransaction(sig, "confirmed");
-      return sig;
-    } catch (e) {
-      console.log(`airdrop ${label} attempt ${i + 1}: ${e.message.split("\n")[0]} — waiting 15s`);
-      await new Promise((r) => setTimeout(r, 15000));
-    }
-  }
-  throw new Error(`airdrop failed for ${label}`);
+  return fund(conn, pubkey, lamports, label);
 }
 
 async function main() {
@@ -59,9 +53,10 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
   console.log("vault:", vault.publicKey.toBase58());
 
   // Dust schedule (lamports). Deterministic via seeded RNG.
+  const nNormals = Math.max(1, N_SWEEPERS - 3);
   const schedule = [];
   schedule.push({ name: "whale", lamports: Math.floor(1.5 * LAMPORTS_PER_SOL) });
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < nNormals; i++) {
     const lamports = Math.floor((0.0001 + rand() * 0.0299) * LAMPORTS_PER_SOL);
     schedule.push({ name: `sweeper_${i}`, lamports });
   }
@@ -110,7 +105,7 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
     const sig = await sendAndConfirmTransaction(conn, tx, [w.kp]);
     contributions.push({ wallet: w.kp.publicKey.toBase58(), lamports: w.lamports, tx: sig });
     console.log(`sweep ${w.name}: ${w.lamports} lamports -> ${sig.slice(0, 12)}…`);
-    await new Promise((r) => setTimeout(r, 400)); // be kind to the RPC
+    await new Promise((r) => setTimeout(r, TX_DELAY_MS));
   }
   const windowEnd = Math.floor(Date.now() / 1000);
 

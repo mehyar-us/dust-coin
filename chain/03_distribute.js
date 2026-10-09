@@ -13,6 +13,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+require("./fund"); // polling confirmation patch
 const { Connection, Keypair, PublicKey } = require("@solana/web3.js");
 const {
   getOrCreateAssociatedTokenAccount, createTransferInstruction, getAccount,
@@ -73,7 +74,7 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
         console.log(`SIMULATED CRASH after ${done} transfers (failure drill)`);
         process.exit(42);
       }
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, parseInt(process.env.DUST_TX_DELAY_MS || "300", 10)));
     }
   }
 

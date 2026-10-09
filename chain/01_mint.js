@@ -17,6 +17,7 @@ const {
 
 const RPC = process.env.RPC_URL || "https://api.devnet.solana.com";
 const WORKDIR = process.env.DUST_WORKDIR || path.join(__dirname, "..", "devnet");
+const SKIP_METADATA = process.env.DUST_SKIP_METADATA === "1";
 const SUPPLY_WHOLE = 1_000_000_000n;
 const DECIMALS = 9;
 
@@ -29,19 +30,10 @@ function loadOrCreateKeypair(p) {
   return kp;
 }
 
+const { fund } = require("./fund");
+
 async function airdropWithRetry(conn, pubkey, lamports, label) {
-  for (let i = 0; i < 8; i++) {
-    try {
-      const sig = await conn.requestAirdrop(pubkey, lamports);
-      await conn.confirmTransaction(sig, "confirmed");
-      console.log(`airdrop ${label}: ${sig}`);
-      return sig;
-    } catch (e) {
-      console.log(`airdrop ${label} attempt ${i + 1} failed: ${e.message}; retrying in 10s`);
-      await new Promise((r) => setTimeout(r, 10000));
-    }
-  }
-  throw new Error(`airdrop failed for ${label}`);
+  return fund(conn, pubkey, lamports, label);
 }
 
 async function main() {
@@ -67,8 +59,11 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
   const mintSig = await mintTo(conn, distributor, mint, distributor.publicKey, distributor, supplyBase);
   console.log("mintTo sig:", mintSig);
 
-  // 3. on-chain metadata (devnet; clearly labeled as a test token)
+  // 3. on-chain metadata (devnet; clearly labeled as a test token).
+  // Skipped when DUST_SKIP_METADATA=1 (e.g. local test validator without the
+  // Metaplex program). Non-fatal either way.
   let metadataSig = null;
+  if (!SKIP_METADATA) {
   try {
     const { createUmi } = require("@metaplex-foundation/umi-bundle-defaults");
     const { keypairIdentity } = require("@metaplex-foundation/umi");
@@ -98,6 +93,9 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
     console.log("metadata sig (hex):", metadataSig);
   } catch (e) {
     console.log("metadata step skipped/failed (non-fatal):", e.message.split("\n")[0]);
+  }
+  } else {
+    console.log("metadata step skipped (DUST_SKIP_METADATA=1)");
   }
 
   // 4. REVOKE mint authority
