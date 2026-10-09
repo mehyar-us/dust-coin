@@ -37,8 +37,8 @@ async function airdropWithRetry(conn, pubkey, lamports, label) {
 }
 
 async function main() {
-  const RPC_OK = RPC.includes("devnet") || RPC.includes("localhost") || RPC.includes("127.0.0.1");
-if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be devnet or a localhost test validator, got (${RPC}) — mainnet is never allowed`);
+  const RPC_OK = RPC.includes("devnet") || RPC.includes("testnet") || RPC.includes("localhost") || RPC.includes("127.0.0.1");
+if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be devnet/testnet or a localhost test validator, got (${RPC}) — mainnet is never allowed`);
   fs.mkdirSync(WORKDIR, { recursive: true });
   const conn = new Connection(RPC, "confirmed");
 
