@@ -1,0 +1,10 @@
+# NEVER commit secrets or key material. Test wallets are devnet-only and
+# worthless, but the policy is absolute: no keys in the repo, ever.
+.env
+devnet/
+wallets/
+*.json.bak
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
