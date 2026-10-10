@@ -18,7 +18,7 @@ require("./fund"); // polling confirmation patch
 const { Connection, Keypair, PublicKey } = require("@solana/web3.js");
 const {
   getOrCreateAssociatedTokenAccount, createTransferInstruction, getAccount,
-  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddress, TOKEN_PROGRAM_ID,
 } = require("@solana/spl-token");
 
 const RPC = process.env.RPC_URL || "https://api.devnet.solana.com";
@@ -61,6 +61,23 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
     const w = entry.wallet;
     if (state.completed[w]) { done++; continue; }
     const dest = new PublicKey(w);
+    const ataAddr = await getAssociatedTokenAddress(mint, dest);
+    // ON-CHAIN IDEMPOTENCY (2026-10-09 audit fix): if a previous run's transfer
+    // LANDED but its confirmation was lost (timeout/blip), state.json was never
+    // updated and a naive re-run would pay the wallet TWICE. The chain is the
+    // source of truth: if the ATA already holds at least the planned share,
+    // reconcile and skip. Safe because the distributor is the sole pre-launch
+    // holder of this mint — any balance here came from our own distribution.
+    try {
+      const existing = await getAccount(conn, ataAddr);
+      if (existing.amount >= BigInt(entry.share_base)) {
+        state.completed[w] = state.completed[w] || "reconciled-onchain";
+        saveState();
+        done++;
+        console.log(`skip ${w.slice(0, 8)}… ATA already holds ${existing.amount} (reconciled on-chain, no double-pay)`);
+        continue;
+      }
+    } catch (e) { /* ATA does not exist yet — proceed to pay */ }
     const ata = await getOrCreateAssociatedTokenAccount(conn, distributor, mint, dest);
     if (!verifyOnly) {
       const ix = createTransferInstruction(distAta.address, ata.address, distributor.publicKey, BigInt(entry.share_base));
@@ -79,12 +96,30 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
     }
   }
 
-  // community remainder
+  // community remainder — same on-chain idempotency as the sweeper leg.
+  // The keypair is persisted BEFORE any transfer: if a previous run's transfer
+  // landed but confirmation was lost, re-running must reuse the SAME wallet
+  // (never generate a fresh one — that would strand the first payout and
+  // double-pay the remainder).
   if (plan.community_remainder_base > 0 && !state.community) {
-    const cw = Keypair.generate();
-    fs.writeFileSync(path.join(WORKDIR, "community.json"), JSON.stringify(Array.from(cw.secretKey)));
+    const cwPath = path.join(WORKDIR, "community.json");
+    const cw = fs.existsSync(cwPath)
+      ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(cwPath, "utf8"))))
+      : Keypair.generate();
+    if (!fs.existsSync(cwPath)) fs.writeFileSync(cwPath, JSON.stringify(Array.from(cw.secretKey)));
+    const cwAtaAddr = await getAssociatedTokenAddress(mint, cw.publicKey);
+    let alreadyPaid = false;
+    try {
+      const cwAcct = await getAccount(conn, cwAtaAddr);
+      if (cwAcct.amount >= BigInt(plan.community_remainder_base)) {
+        state.community = { wallet: cw.publicKey.toBase58(), tx: "reconciled-onchain", amount: plan.community_remainder_base };
+        saveState();
+        console.log(`community remainder already on-chain (${cwAcct.amount}) — skipping, no double-pay`);
+        alreadyPaid = true;
+      }
+    } catch (e) { /* ATA does not exist yet — proceed to pay */ }
     const ata = await getOrCreateAssociatedTokenAccount(conn, distributor, mint, cw.publicKey);
-    if (!verifyOnly) {
+    if (!verifyOnly && !alreadyPaid) {
       const { Transaction, sendAndConfirmTransaction } = require("@solana/web3.js");
       const ix = createTransferInstruction(distAta.address, ata.address, distributor.publicKey, BigInt(plan.community_remainder_base));
       const sig = await sendAndConfirmTransaction(conn, new Transaction().add(ix), [distributor]);

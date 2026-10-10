@@ -41,8 +41,18 @@ const sigStatus = new Map();
 
 function fakeSig() {
   sigCounter++;
-  // deterministic 64-byte-ish base58-ish signature
-  return "5".repeat(20) + String(sigCounter).padStart(10, "0") + "9".repeat(58);
+  // Faithful fake: real Solana signatures are base58-encoded 64-byte values.
+  // (The old template contained '0', which is not in the base58 alphabet,
+  // and broke any client path that validates the signature encoding.)
+  const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const buf = Buffer.alloc(64);
+  buf.writeUInt32BE(sigCounter, 60); // deterministic counter in last 4 bytes
+  let x = BigInt("0x" + buf.toString("hex"));
+  let s = "";
+  while (x > 0n) { s = B58[Number(x % 58n)] + s; x = x / 58n; }
+  let zeros = 0; // base58 preserves leading zero bytes as leading "1"s
+  for (let i = 0; i < buf.length && buf[i] === 0; i++) zeros++;
+  return "1".repeat(zeros) + s;
 }
 
 // Encode a token Account struct (165 bytes) for getAccountInfo

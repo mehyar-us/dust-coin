@@ -330,3 +330,30 @@ tested. On-chain SPL program execution is NOT tested (blocked above).
 
 ## RESULT: PARTIAL — math + orchestration logic fully verified (26 unit + 15 drill checks PASS);
 ##          on-chain E2E BLOCKED by sandbox network (documented above, not faked).
+
+## 2026-10-09 ~21:30 ET — lost-confirmation drill (audit fix verification, mock RPC, sandbox)
+Context: the 2026-10-09 adversarial audit found that a distribution transfer
+landing on-chain while its confirmation is lost (timeout/blip) would be paid
+TWICE on re-run — state.json only records successes, never reconciles with
+chain state. Fixed in chain/03_distribute.js: before paying, check the
+destination ATA's on-chain balance; if it already holds >= the planned share,
+reconcile and skip (safe: distributor is the sole pre-launch holder of the
+mint). Community leg: keypair now persisted BEFORE the transfer and reused on
+re-run (previously a fresh wallet was generated each run, stranding funds on
+lost confirmation); same on-chain reconciliation.
+New drill: tests/lost_confirmation_drill.js — 14 checks, ALL PASS:
+- Scenario A (sweeper leg): clean crash after 2/12 -> hand-applied plan[2]'s
+  transfer on-chain with state.json untouched (the exact lost-confirmation end
+  state) -> re-run reconciled it on-chain (skip logged, NO double-pay);
+  all 12 balances == plan exactly; distributor leftover exact; --verify PASS.
+- Scenario B (community leg): 10 capped whales -> 500M DUST remainder ->
+  full run -> deleted state.community (simulating lost confirmation) ->
+  re-run REUSED the same community wallet (not regenerated), reconciled
+  on-chain, remainder exactly 500M (not 2x).
+Also fixed: tests/mock_rpc.js fakeSig() now emits valid base58 64-byte
+signatures (old template contained '0', not in the base58 alphabet, breaking
+any client path that validates signature encoding).
+NOTE (sandbox env): the ORIGINAL failure_drill.js is flaky in this sandbox
+(resume dies with blockhash timeout + socket hang-ups) — fails IDENTICALLY on
+pristine pre-fix code, so not a regression from this change. It passed 15/15
+on the PC. New drill passes 14/14 here. PC re-run recommended before mainnet.
