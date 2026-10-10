@@ -44,7 +44,8 @@ def main() -> int:
         if not d.get(item) and not checklist.get(item):
             errors.append(f"missing disclosure field: {item}")
 
-    if d.get("dust_base") != args.expect_dust_base:
+    # dust_base may be serialized as a string (JS BigInt.toString()) — compare as strings
+    if str(d.get("dust_base")) != str(args.expect_dust_base):
         errors.append(f"dust amount mismatch: got {d.get('dust_base')}, "
                       f"expected {args.expect_dust_base}")
     if d.get("sol_lamports") != args.expect_sol_lamports:

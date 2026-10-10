@@ -31,6 +31,7 @@ function loadOrCreateKeypair(p) {
 }
 
 const { fund } = require("./fund");
+require("./patch-connection");
 
 async function airdropWithRetry(conn, pubkey, lamports, label) {
   return fund(conn, pubkey, lamports, label);
@@ -54,9 +55,13 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
   const mint = await createMint(conn, distributor, distributor.publicKey, distributor.publicKey, DECIMALS);
   console.log("mint:", mint.toBase58());
 
-  // 2. mint full supply to distributor
+  // 2. mint full supply to the distributor's associated token account
+  // (mintTo requires a TOKEN account as destination, not a wallet address)
+  const { getOrCreateAssociatedTokenAccount } = require("@solana/spl-token");
+  const distAta = await getOrCreateAssociatedTokenAccount(conn, distributor, mint, distributor.publicKey);
+  console.log("distributor ATA:", distAta.address.toBase58());
   const supplyBase = SUPPLY_WHOLE * 10n ** BigInt(DECIMALS);
-  const mintSig = await mintTo(conn, distributor, mint, distributor.publicKey, distributor, supplyBase);
+  const mintSig = await mintTo(conn, distributor, mint, distAta.address, distributor, supplyBase);
   console.log("mintTo sig:", mintSig);
 
   // 3. on-chain metadata (devnet; clearly labeled as a test token).

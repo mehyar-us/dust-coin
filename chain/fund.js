@@ -10,6 +10,7 @@
  * runtimes (and flaky on devnet). Polling getSignatureStatus over HTTP is
  * slower but works everywhere.
  */
+require("./patch-connection"); // devnet RPC armor: 429 retry + pacing on sends
 const fs = require("fs");
 const {
   Connection, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction,

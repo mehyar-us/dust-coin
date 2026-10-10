@@ -1,8 +1,10 @@
 /** DUST devnet E2E — step 5: LP-seeding rehearsal.
  *
  * Rehearses the POST-SWEEP founder LP seed on DEVNET:
- *   1. founder wallet is funded with the disclosed seed amounts
- *      (devnet SOL + test DUST from the distributor)
+ *   1. founder wallet is funded with the disclosed SOL seed amount (devnet SOL
+ *      via distributor); the DUST comes from the founder's OWN earned sweep
+ *      allocation — they swept in 02_sweepers like everyone else, subject to
+ *      the same per-wallet cap (no special treatment)
  *   2. amounts move to a PUBLICLY LABELED vault wallet
  *   3. vault balances are verified on-chain to the base unit
  *   4. a disclosure record is emitted (<workdir>/lp_disclosure.json) in the
@@ -14,6 +16,7 @@
  *
  * DEVNET ONLY.
  */
+require("./patch-connection"); // devnet RPC armor: 429 retry + pacing on sends
 const fs = require("fs");
 const path = require("path");
 require("./fund"); // polling confirmation patch (no WebSocket dependency)
@@ -63,16 +66,21 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
     console.log("founder funded:", sig.slice(0, 16) + "…");
   }
 
-  // founder receives test DUST from distributor
+  // founder seeds DUST from their OWN earned sweep allocation (02_sweepers paid
+  // them pro-rata like everyone else; the per-wallet cap applied to them too).
+  // There is no distributor reserve — 100% of supply went to sweepers.
   const seedDustBase = BigInt(SEED_DUST_WHOLE) * 10n ** BigInt(mintInfo.decimals);
-  const distAta = await getOrCreateAssociatedTokenAccount(conn, distributor, mint, distributor.publicKey);
   const founderAta = await getOrCreateAssociatedTokenAccount(conn, founder, mint, founder.publicKey);
-  const fundTx = await sendAndConfirmTransaction(
-    conn,
-    new Transaction().add(createTransferInstruction(distAta.address, founderAta.address, distributor.publicKey, seedDustBase)),
-    [distributor]
-  );
-  console.log("founder DUST funded:", fundTx.slice(0, 16) + "…");
+  const founderDust = (await getAccount(conn, founderAta.address)).amount;
+  console.log(`founder earned DUST: ${founderDust} (seed needs ${seedDustBase})`);
+  if (founderDust < seedDustBase) {
+    throw new Error(`founder earned ${founderDust} DUST < seed ${seedDustBase}; cannot rehearse LP`);
+  }
+  // the distribution payout is the honest on-chain record of where the DUST came from
+  const distState = JSON.parse(fs.readFileSync(path.join(WORKDIR, "state.json"), "utf8"));
+  const fundTx = distState.completed[founder.publicKey.toBase58()];
+  if (!fundTx) throw new Error("founder has no distribution payout in state.json");
+  console.log("founder DUST source (distribution tx):", fundTx.slice(0, 16) + "…");
 
   // move both sides into the public LP vault
   const vaultAta = await getOrCreateAssociatedTokenAccount(conn, founder, mint, lpVault.publicKey);
@@ -108,7 +116,7 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
     dust_base: seedDustBase.toString(),
     dust_whole: SEED_DUST_WHOLE,
     sol_lamports: SEED_SOL_LAMPORTS,
-    dust_source: `distributor wallet ${distributor.publicKey.toBase58()} (devnet test DUST)`,
+    dust_source: `founder's earned sweep allocation (pro-rata, per-wallet cap applied like everyone else) — distribution tx ${fundTx}`,
     fund_tx: fundTx,
     dust_to_vault_tx: dustTx,
     sol_to_vault_tx: solTx,

@@ -11,6 +11,7 @@
  *
  * DEVNET ONLY. Exits non-zero if not pointed at devnet.
  */
+require("./patch-connection"); // devnet RPC armor: 429 retry + pacing on sends
 const fs = require("fs");
 const path = require("path");
 require("./fund"); // polling confirmation patch

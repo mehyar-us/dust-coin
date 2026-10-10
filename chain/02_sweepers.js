@@ -1,14 +1,17 @@
 /** DUST devnet E2E — step 2: simulate sweepers.
  *
- * Creates 25 devnet test wallets and simulates the Great Sweep:
+ * Creates 26 devnet test wallets and simulates the Great Sweep:
  *   - 1 whale (1.5 SOL dust — will hit the per-wallet cap)
  *   - 22 normal sweepers (0.0001 – 0.03 SOL dust)
  *   - 1 sub-floor dust (1000 lamports < 10000 floor — excluded)
+ *   - 1 founder (0.02 SOL dust — sweeps like everyone else; their earned DUST
+ *     seeds the LP in 05_lp.js; the per-wallet cap applies to them too)
  *   - 1 wallet that sends nothing (non-sweeper)
  * Each sweeper sends its dust to the vault. Emits <workdir>/contributions.json.
  *
  * DEVNET ONLY. Exits non-zero if not pointed at devnet.
  */
+require("./patch-connection"); // devnet RPC armor: 429 retry + pacing on sends
 const fs = require("fs");
 const path = require("path");
 const {
@@ -65,25 +68,39 @@ if (RPC.includes("mainnet") || !RPC_OK) throw new Error(`REFUSING: RPC must be d
 
   const wallets = schedule.map((s, i) => ({ ...s, kp: loadOrCreate(path.join(WORKDIR, `sweeper_${i}.json`)) }));
   const nonSweeper = loadOrCreate(path.join(WORKDIR, "sweeper_nonsweeper.json"));
+  // The founder sweeps like everyone else (no special treatment — the per-wallet
+  // cap applies to them too). Their earned DUST seeds the LP in 05_lp.js.
+  const founderKp = loadOrCreate(path.join(WORKDIR, "founder.json"));
+  wallets.push({ name: "founder", lamports: Math.floor(0.02 * LAMPORTS_PER_SOL), kp: founderKp });
 
-  // Fund: airdrop once to distributor, then distribute SOL to sweepers (fewer faucet hits)
-  const perWalletNeed = 0.05 * LAMPORTS_PER_SOL; // dust + fees headroom
-  const totalNeed = Math.floor(perWalletNeed * (wallets.length + 1) + 2.0 * LAMPORTS_PER_SOL);
+  // Fund: each wallet needs its OWN dust amount + fee headroom.
+  // (The whale sweeps 1.5 SOL — a flat per-wallet amount would starve it.)
+  // Top up the distributor from the funder only for the actual shortfall.
+  const FEE_HEADROOM = 0.02 * LAMPORTS_PER_SOL;
+  const DIST_RESERVE = 0.1 * LAMPORTS_PER_SOL; // distributor's own tx fees
+  const needs = [];
+  let shortfall = 0;
+  for (const w of [...wallets, { name: "nonsweeper", kp: nonSweeper, lamports: 0 }]) {
+    const need = (w.lamports || 0) + FEE_HEADROOM;
+    const b = await conn.getBalance(w.kp.publicKey);
+    const miss = Math.max(0, Math.floor(need - b));
+    needs.push({ w, need, miss });
+    shortfall += miss;
+  }
   let dbal = await conn.getBalance(distributor.publicKey);
-  while (dbal < totalNeed) {
+  while (dbal < shortfall + DIST_RESERVE) {
     await airdropWithRetry(conn, distributor.publicKey, 2 * LAMPORTS_PER_SOL, "distributor-topup");
     dbal = await conn.getBalance(distributor.publicKey);
   }
-  console.log("distributor funded:", dbal / LAMPORTS_PER_SOL, "SOL");
+  console.log(`distributor: ${(dbal / LAMPORTS_PER_SOL).toFixed(3)} SOL; wallet shortfall: ${(shortfall / LAMPORTS_PER_SOL).toFixed(3)} SOL`);
 
-  for (const w of [...wallets, { name: "nonsweeper", kp: nonSweeper }]) {
-    const b = await conn.getBalance(w.kp.publicKey);
-    if (b < perWalletNeed) {
+  for (const { w, need, miss } of needs) {
+    if (miss > 0) {
       const tx = new Transaction().add(
         SystemProgram.transfer({
           fromPubkey: distributor.publicKey,
           toPubkey: w.kp.publicKey,
-          lamports: Math.floor(perWalletNeed - b),
+          lamports: miss,
         })
       );
       await sendAndConfirmTransaction(conn, tx, [distributor]);

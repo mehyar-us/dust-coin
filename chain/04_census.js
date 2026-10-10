@@ -6,6 +6,7 @@
  *
  * DEVNET ONLY.
  */
+require("./patch-connection"); // devnet RPC armor: 429 retry + pacing on sends
 const fs = require("fs");
 const path = require("path");
 const { Connection, PublicKey } = require("@solana/web3.js");
